@@ -139,7 +139,8 @@ static class Program
 
         Lock(Logger.SharedDataDir, () => InstallDirectoryLock.PrepareSharedDataDirectory(Logger.SharedDataDir));
         var appDirectory = AppContext.BaseDirectory;
-        if (isService && ServiceInstaller.LocksApplicationFolder)
+        // A link-managed copy keeps its own program folder: see PortableDirectoryLock.IsLinkManaged.
+        if (isService && ServiceInstaller.LocksApplicationFolder && !PortableDirectoryLock.IsLinkManaged(appDirectory))
             Lock(appDirectory, () => PortableDirectoryLock.IsCurrent(appDirectory) ? null : PortableDirectoryLock.Lock(appDirectory));
         return (report, errors);
 

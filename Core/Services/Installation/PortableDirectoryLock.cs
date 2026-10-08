@@ -77,6 +77,40 @@ public static class PortableDirectoryLock
         Allow(user, FileSystemRights.FullControl, AceFlags.ObjectInherit | AceFlags.ContainerInherit),
     ], PreserveLinks: true);
 
+    /// <summary>
+    /// True when the copy was assembled by a package manager instead of being unzipped in place: scoop links
+    /// <c>current</c> to the version folder and <c>Data</c> to <c>persist\Data</c>. <see cref="Lock"/> cannot
+    /// take that layout -- the walk refuses a link as its root, so the service could not be installed or
+    /// started from such a copy at all. Locking what the link points at is no answer either: the walk deletes
+    /// every link it meets inside the tree (that is the manager's own <c>Data</c> junction, and the portable
+    /// data would then be abandoned), and the version folder it makes read-only is one the manager can no
+    /// longer replace for the user who installed it. Callers leave the program folder to the manager and lock
+    /// the data directories as usual.
+    /// </summary>
+    /// <remarks>
+    /// ponytail: the program folder of a link-managed copy is therefore never locked by this product, even
+    /// though the service loads its code from there. If that is ever wanted, the walk needs to be told that
+    /// such a copy's own links are ours (keep <c>Data</c>, lock its target as the data root) and the zone for
+    /// the binaries needs to keep the installing user's full control so the manager can still update in place.
+    /// </remarks>
+    public static bool IsLinkManaged(string appDirectory)
+    {
+        appDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(appDirectory));
+        return IsLink(appDirectory) || IsLink(Path.Combine(appDirectory, "Data"));
+    }
+
+    private static bool IsLink(string path)
+    {
+        try
+        {
+            return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
+
     public static Report Lock(string appDirectory)
     {
         appDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(appDirectory));

@@ -32,10 +32,17 @@ static class ServiceInstaller
             // A portable copy lives wherever it was unzipped, usually somewhere every user can write, and the
             // service about to run from it as LocalSystem would load whatever anyone put there. Locked before
             // the service is pointed at it; a folder that cannot be locked is not one to install it from.
-            if (LocksApplicationFolder)
+            var portableFolder = Path.GetDirectoryName(serviceExePath)!;
+            if (LocksApplicationFolder && PortableDirectoryLock.IsLinkManaged(portableFolder))
+            {
+                // scoop assembles a copy out of junctions and this lock cannot be applied to one; refusing the
+                // copy instead would mean the service could never be installed from a scoop install.
+                Logger.Log($"[InstallDirectoryLock] {portableFolder} was assembled by a package manager; its program folder is not locked.", LogLevel.Warn);
+            }
+            else if (LocksApplicationFolder)
             {
                 Logger.Log("Locking the portable folder to SYSTEM and Administrators before installing the service.");
-                var report = PortableDirectoryLock.Lock(Path.GetDirectoryName(serviceExePath)!);
+                var report = PortableDirectoryLock.Lock(portableFolder);
                 foreach (var path in report.Removed)
                     Logger.Log($"[InstallDirectoryLock] Removed a link that was not this product's: {path}", LogLevel.Warn);
                 foreach (var path in report.UserDataFailed)

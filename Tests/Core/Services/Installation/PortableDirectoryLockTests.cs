@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using Lertaro.Core.Services.Installation;
@@ -193,5 +194,72 @@ public sealed class PortableDirectoryLockTests
         Assert.IsNull(zoneFor(Path.Combine(App, "Plugins")));
         Assert.IsNull(zoneFor(Path.Combine(App, "Data", "Machine")));
         Assert.IsNull(zoneFor(Path.Combine(Users, CurrentUserIdentity.Hash(AliceSid), "user-settings.json")));
+    }
+
+    [TestMethod]
+    public void IsLinkManaged_ProgramFolderIsAPackageManagerLink_IsTrue()
+    {
+        // scoop: apps\lertaro\current -> apps\lertaro\5.9.1, which is what the shortcut and the service run.
+        using var tree = new LinkTree();
+        var version = tree.NewDirectory(@"apps\lertaro\5.9.1");
+        var current = tree.NewLink(@"apps\lertaro\current", version);
+
+        Assert.IsTrue(PortableDirectoryLock.IsLinkManaged(current));
+        Assert.IsTrue(PortableDirectoryLock.IsLinkManaged(current + Path.DirectorySeparatorChar),
+            "the service passes AppContext.BaseDirectory, which keeps its trailing separator");
+    }
+
+    [TestMethod]
+    public void IsLinkManaged_DataFolderIsALink_IsTrue()
+    {
+        // scoop's `persist: Data`: <version>\Data -> persist\lertaro\Data. Reached from the version folder
+        // directly (no `current`), so the program folder itself is ordinary and only Data is a link.
+        using var tree = new LinkTree();
+        var app = tree.NewDirectory("app");
+        tree.NewLink(Path.Combine("app", "Data"), tree.NewDirectory("persist"));
+
+        Assert.IsTrue(PortableDirectoryLock.IsLinkManaged(app));
+    }
+
+    [TestMethod]
+    public void IsLinkManaged_UnzippedCopy_IsFalse()
+    {
+        using var tree = new LinkTree();
+        var app = tree.NewDirectory("app");
+        tree.NewDirectory(Path.Combine("app", "Data", "Users"));
+
+        Assert.IsFalse(PortableDirectoryLock.IsLinkManaged(app), "an ordinary portable copy is still locked");
+        Assert.IsFalse(PortableDirectoryLock.IsLinkManaged(tree.NewDirectory("no-data")), "no Data folder yet");
+    }
+
+    private sealed class LinkTree : IDisposable
+    {
+        private readonly string _root = Directory.CreateTempSubdirectory("LertaroLinkManaged-").FullName;
+        private readonly List<string> _links = [];
+
+        public string NewDirectory(string relative) => Directory.CreateDirectory(Path.Combine(_root, relative)).FullName;
+
+        public string NewLink(string relative, string target)
+        {
+            var link = Path.Combine(_root, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+            using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /J \"{link}\" \"{target}\"")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+            })!;
+            process.WaitForExit();
+            Assert.AreEqual(0, process.ExitCode, "mklink /J failed");
+            _links.Add(link);
+            return link;
+        }
+
+        public void Dispose()
+        {
+            // Deleting a tree recursively walks into a junction instead of removing it and then fails.
+            foreach (var link in _links.Where(Directory.Exists)) Directory.Delete(link);
+            Directory.Delete(_root, true);
+        }
     }
 }
